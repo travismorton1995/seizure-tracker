@@ -85,10 +85,29 @@
   .stat b{display:block;font-size:23px;font-weight:600;font-variant-numeric:tabular-nums}
   .stat span{color:var(--muted);font-size:12px}
   h2{font-size:15px;font-weight:600;margin:26px 0 8px}
-  .chart{background:var(--surface);border-radius:16px;padding:14px 12px 8px}
+  .subhead{font-size:13px;font-weight:600;color:var(--muted);margin:22px 0 6px}
+  .range-pills{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 4px;margin-bottom:2px;scrollbar-width:none}
+  .range-pills::-webkit-scrollbar{display:none}
+  .pill{flex:0 0 auto;padding:7px 13px;border-radius:999px;background:var(--surface);color:var(--muted);
+    font-size:13px;border:1px solid var(--line)}
+  .pill[aria-pressed="true"]{background:var(--focal);color:#06231F;border-color:var(--focal);font-weight:600}
+  .chart{background:var(--surface);border-radius:16px;padding:14px 12px 8px;position:relative;cursor:pointer}
+  .chart::after{content:"⤢ full screen";position:absolute;top:10px;right:12px;color:var(--muted);
+    font-size:10px;opacity:.65;letter-spacing:.02em;pointer-events:none}
   .chart svg{display:block;width:100%;height:auto}
   .legend{display:flex;gap:16px;color:var(--muted);font-size:12px;margin-top:8px;padding:0 2px}
   .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+  dialog.modal{position:fixed;inset:0;margin:0;width:100vw;height:100dvh;max-width:none;max-height:none;
+    border-radius:0;padding:0;background:var(--ink);display:none;flex-direction:column}
+  dialog.modal[open]{display:flex}
+  dialog.modal::backdrop{background:var(--ink)}
+  .modal-bar{display:flex;align-items:center;justify-content:space-between;
+    padding:calc(env(safe-area-inset-top,0px) + 16px) var(--pad) 6px;flex:0 0 auto}
+  .modal-title{font-size:16px;font-weight:600}
+  .modal-close{font-size:20px;color:var(--muted);padding:8px 12px;line-height:1}
+  #modalPills{padding:0 var(--pad) 6px;flex:0 0 auto}
+  .modal-body{flex:1;min-height:0;padding:2px var(--pad) calc(var(--pad) + var(--safe-b));display:flex}
+  .modal-body svg{flex:1;width:100%;height:100%}
   .day{color:var(--muted);font-size:13px;margin:20px 0 6px}
   .entry{display:flex;align-items:center;gap:13px;padding:13px 0;border-bottom:1px solid var(--line)}
   .entry .bar-dot{width:4px;align-self:stretch;border-radius:2px;flex:0 0 auto}
@@ -171,15 +190,24 @@
       <div class="stat"><b id="sMed">—</b><span>median length</span></div>
     </div>
 
-    <h2>Seizures per day</h2>
-    <div class="chart" id="chartFreq"></div>
+    <h2>Analytics</h2>
+    <div class="range-pills" id="rangePills" role="group" aria-label="Time range"></div>
 
-    <h2>Length of each seizure</h2>
-    <div class="chart" id="chartDur"></div>
+    <div class="subhead">Seizures per day</div>
+    <div class="chart" id="chartFreq" data-chart="freq"></div>
+
+    <div class="subhead">Length of each seizure</div>
+    <div class="chart" id="chartDur" data-chart="dur"></div>
     <div class="legend">
       <span><i style="background:var(--focal)"></i>Focal</span>
       <span><i style="background:var(--grand)"></i>Grand mal</span>
     </div>
+
+    <div class="subhead">By day of week</div>
+    <div class="chart" id="chartDow" data-chart="dow"></div>
+
+    <div class="subhead">By time of day</div>
+    <div class="chart" id="chartHour" data-chart="hour"></div>
 
     <h2>All entries</h2>
     <div id="list"></div>
@@ -217,6 +245,15 @@
     <button id="addCancel">Cancel</button>
     <button class="go" id="addSave">Add entry</button>
   </div>
+</dialog>
+
+<dialog id="chartDlg" class="modal">
+  <div class="modal-bar">
+    <div class="modal-title" id="modalTitle"></div>
+    <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
+  </div>
+  <div class="range-pills" id="modalPills" role="group" aria-label="Time range"></div>
+  <div class="modal-body" id="modalBody"></div>
 </dialog>
 
 <div class="toast" id="toast"></div>
@@ -301,35 +338,77 @@ function since(){
   const h=m/60; if(h<48) return Math.round(h)+" hr since last";
   return Math.round(h/24)+" days since last";
 }
-function svgFreq(days=30){
+/* ---------- analytics range ---------- */
+const RANGES=[{label:"7D",v:7},{label:"14D",v:14},{label:"30D",v:30},{label:"90D",v:90},{label:"6M",v:182},{label:"1Y",v:365},{label:"All",v:Infinity}];
+let chartDays=(()=>{ const raw=store.get("seizurelog.range"); const v=raw==="Infinity"?Infinity:Number(raw);
+  return RANGES.some(r=>r.v===v)?v:30; })();
+function setRange(v){
+  chartDays=v; store.set("seizurelog.range",String(v));
+  renderPills($("#rangePills")); drawCharts();
+  if(modalDlg.open){ renderPills($("#modalPills")); drawModal(); }
+}
+function renderPills(container){
+  if(!container) return;
+  container.innerHTML="";
+  RANGES.forEach(r=>{
+    const b=document.createElement("button");
+    b.type="button"; b.className="pill"; b.textContent=r.label;
+    b.setAttribute("aria-pressed",String(r.v===chartDays));
+    b.onclick=()=>setRange(r.v);
+    container.appendChild(b);
+  });
+}
+function effectiveDays(){
+  if(chartDays!==Infinity) return chartDays;
+  if(!records.length) return 30;
+  const earliest=Math.min(...records.map(r=>new Date(r.start).getTime()));
+  return Math.max(1,Math.ceil((Date.now()-earliest)/864e5));
+}
+
+function svgFreq(days,W,H){
+  W=W||300; H=H||110; days=days===undefined?30:days;
+  const span=days===Infinity?effectiveDays():days;
+  const unit=span<=60?"day":span<=370?"week":"month";
   const now=new Date(); now.setHours(0,0,0,0);
   const buckets=[];
-  for(let i=days-1;i>=0;i--){
-    const d=new Date(now); d.setDate(d.getDate()-i);
-    buckets.push({d:d,k:dayKey(d),n:0});
+  if(unit==="day"){
+    for(let i=span-1;i>=0;i--){ const d=new Date(now); d.setDate(d.getDate()-i);
+      buckets.push({from:d,to:new Date(d.getTime()+864e5),label:d.toLocaleDateString(undefined,{month:"short",day:"numeric"})}); }
+  } else if(unit==="week"){
+    const weeks=Math.ceil(span/7);
+    for(let i=weeks-1;i>=0;i--){ const to=new Date(now); to.setDate(to.getDate()-i*7); const from=new Date(to.getTime()-7*864e5);
+      buckets.push({from,to,label:from.toLocaleDateString(undefined,{month:"short",day:"numeric"})}); }
+  } else {
+    const months=Math.ceil(span/30);
+    for(let i=months-1;i>=0;i--){ const from=new Date(now.getFullYear(),now.getMonth()-i,1); const to=new Date(now.getFullYear(),now.getMonth()-i+1,1);
+      buckets.push({from,to,label:from.toLocaleDateString(undefined,{month:"short"})}); }
   }
-  const idx={}; buckets.forEach((b,i)=>idx[b.k]=i);
-  records.forEach(r=>{const i=idx[dayKey(r.start)]; if(i!==undefined) buckets[i].n++;});
+  buckets.forEach(b=>b.n=0);
+  records.forEach(r=>{
+    const t=new Date(r.start).getTime();
+    for(const b of buckets){ if(t>=b.from.getTime()&&t<b.to.getTime()){ b.n++; break; } }
+  });
   const max=Math.max(1,...buckets.map(b=>b.n));
-  const W=300,H=110,bw=W/days;
-  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per day, last ${days} days">`;
+  const n=buckets.length, bw=W/n;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per ${unit}, last ${span} days">`;
   for(let g=0;g<=max;g++){const y=H-(g/max)*H;
     out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
   buckets.forEach((b,i)=>{
-    const h=(b.n/max)*H, x=i*bw+bw*0.18, w=bw*0.64;
+    const h=(b.n/max)*H, x=i*bw+bw*0.18, w=Math.max(1,bw*0.64);
     if(b.n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="#FFB338"/>`;
   });
-  const f=buckets[0].d, l=buckets[buckets.length-1].d, mo={month:"short",day:"numeric"};
-  out+=`<text x="0" y="${H+13}" fill="#8FA9B7" font-size="9">${f.toLocaleDateString(undefined,mo)}</text>`;
-  out+=`<text x="${W}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="end">${l.toLocaleDateString(undefined,mo)}</text>`;
-  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max}/day peak</text></svg>`;
+  out+=`<text x="0" y="${H+13}" fill="#8FA9B7" font-size="9">${buckets[0].label}</text>`;
+  out+=`<text x="${W}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="end">${buckets[buckets.length-1].label}</text>`;
+  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max}/${unit} peak</text></svg>`;
   return out;
 }
-function svgDur(days=30){
-  const cutoff=Date.now()-days*864e5;
+function svgDur(days,W,H){
+  W=W||300; H=H||110; days=days===undefined?30:days;
+  const span=days===Infinity?effectiveDays():days;
+  const cutoff=Date.now()-span*864e5;
   const pts=records.filter(r=>new Date(r.start).getTime()>=cutoff);
-  if(!pts.length) return `<svg viewBox="0 0 300 110"><text x="150" y="58" fill="#8FA9B7" font-size="11" text-anchor="middle">No entries in the last ${days} days</text></svg>`;
-  const W=300,H=110, t0=cutoff, t1=Date.now();
+  if(!pts.length) return `<svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}" fill="#8FA9B7" font-size="11" text-anchor="middle">No entries in this range</text></svg>`;
+  const t0=cutoff, t1=Date.now();
   const maxD=Math.max(60,...pts.map(p=>p.dur));
   const X=t=>((t-t0)/(t1-t0))*(W-14)+7, Y=d=>H-(d/maxD)*(H-14)-4;
   let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Length of each seizure">`;
@@ -345,6 +424,86 @@ function svgDur(days=30){
   out+=`</svg>`;
   return out;
 }
+function svgDow(days,W,H){
+  W=W||300; H=H||110; days=days===undefined?30:days;
+  const span=days===Infinity?effectiveDays():days;
+  const cutoff=Date.now()-span*864e5;
+  const counts=[0,0,0,0,0,0,0];
+  records.forEach(r=>{ const t=new Date(r.start); if(t.getTime()>=cutoff) counts[t.getDay()]++; });
+  const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const max=Math.max(1,...counts), bw=W/7;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures by day of week">`;
+  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
+    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
+  counts.forEach((n,i)=>{
+    const h=(n/max)*H, x=i*bw+bw*0.18, w=bw*0.64;
+    if(n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="#58C0B0"/>`;
+    out+=`<text x="${(x+w/2).toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="middle">${names[i]}</text>`;
+  });
+  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max} peak</text></svg>`;
+  return out;
+}
+function svgHour(days,W,H){
+  W=W||300; H=H||110; days=days===undefined?30:days;
+  const span=days===Infinity?effectiveDays():days;
+  const cutoff=Date.now()-span*864e5;
+  const counts=new Array(24).fill(0);
+  records.forEach(r=>{ const t=new Date(r.start); if(t.getTime()>=cutoff) counts[t.getHours()]++; });
+  const max=Math.max(1,...counts), bw=W/24;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures by time of day">`;
+  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
+    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
+  counts.forEach((n,i)=>{
+    const h=(n/max)*H, x=i*bw+bw*0.12, w=bw*0.76;
+    if(n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#FFB338"/>`;
+  });
+  [0,6,12,18,23].forEach(h=>{
+    const x=h*bw+bw/2, label=h===0?"12am":h<12?h+"am":h===12?"12pm":(h-12)+"pm";
+    out+=`<text x="${x.toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="middle">${label}</text>`;
+  });
+  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max} peak</text></svg>`;
+  return out;
+}
+function drawCharts(){
+  $("#chartFreq").innerHTML=svgFreq(chartDays);
+  $("#chartDur").innerHTML=svgDur(chartDays);
+  $("#chartDow").innerHTML=svgDow(chartDays);
+  $("#chartHour").innerHTML=svgHour(chartDays);
+}
+
+/* ---------- fullscreen chart modal ---------- */
+const modalDlg=$("#chartDlg");
+const chartMeta={
+  freq:{title:"Seizures per day", fn:svgFreq},
+  dur:{title:"Length of each seizure", fn:svgDur},
+  dow:{title:"Seizures by day of week", fn:svgDow},
+  hour:{title:"Seizures by time of day", fn:svgHour}
+};
+let openKey=null;
+document.querySelectorAll(".chart[data-chart]").forEach(el=>{ el.onclick=()=>openModal(el.dataset.chart); });
+function openModal(key){
+  openKey=key;
+  $("#modalTitle").textContent=chartMeta[key].title;
+  renderPills($("#modalPills"));
+  modalDlg.showModal();
+  requestAnimationFrame(()=>requestAnimationFrame(drawModal));
+}
+function drawModal(){
+  if(!openKey||!modalDlg.open) return;
+  const body=$("#modalBody");
+  const w=Math.round(body.clientWidth), h=Math.round(body.clientHeight);
+  if(w<10||h<10) return;
+  body.innerHTML=chartMeta[openKey].fn(chartDays,w,h);
+}
+$("#modalClose").onclick=()=>modalDlg.close();
+modalDlg.addEventListener("close",()=>{openKey=null;});
+window.addEventListener("resize",()=>{ if(modalDlg.open) drawModal(); });
+if(window.visualViewport) visualViewport.addEventListener("resize",()=>{ if(modalDlg.open) drawModal(); });
+if(screen.orientation && screen.orientation.addEventListener){
+  screen.orientation.addEventListener("change",()=>{ if(modalDlg.open) setTimeout(drawModal,60); });
+} else {
+  window.addEventListener("orientationchange",()=>{ if(modalDlg.open) setTimeout(drawModal,150); });
+}
 function render(){
   const now=Date.now();
   const in7=records.filter(r=>now-new Date(r.start).getTime()<7*864e5).length;
@@ -355,8 +514,8 @@ function render(){
     $("#sMed").textContent=fmt(ds[Math.floor(ds.length/2)]);
   } else $("#sMed").textContent="—";
   $("#sinceLast").textContent=since();
-  $("#chartFreq").innerHTML=svgFreq();
-  $("#chartDur").innerHTML=svgDur();
+  renderPills($("#rangePills"));
+  drawCharts();
 
   const list=$("#list");
   if(!records.length){ list.innerHTML='<div class="empty">Nothing logged yet. The timer starts the moment you open this app.</div>'; return; }
