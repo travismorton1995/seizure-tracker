@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D1B26">
+<title>Seizure Log</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --ink:#0D1B26; --surface:#142633; --surface-2:#1B3140; --line:#25404F;
+    --text:#E8F1F5; --muted:#8FA9B7;
+    --amber:#FFB338; --focal:#58C0B0; --grand:#E4695E;
+    --pad:18px;
+    --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--ink);color:var(--text);
+    font-family:ui-sans-serif,system-ui,"Roboto","Segoe UI",sans-serif;
+    font-size:16px;line-height:1.45;overscroll-behavior:none;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  .screen{display:none;min-height:100dvh;flex-direction:column}
+  .screen.on{display:flex}
+
+  /* ---------- timer ---------- */
+  #timer{align-items:center;justify-content:center;text-align:center;padding:var(--pad)}
+  .clock{
+    font-size:clamp(64px,26vw,120px);line-height:1;font-weight:200;
+    font-variant-numeric:tabular-nums;letter-spacing:-.03em;color:var(--amber);
+  }
+  .clock.idle{color:var(--muted)}
+  .clock-note{color:var(--muted);margin-top:14px;font-size:15px}
+  .pulse{width:11px;height:11px;border-radius:50%;background:var(--amber);
+    display:inline-block;margin-right:8px;vertical-align:middle;animation:beat 1.6s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+  .stack{position:fixed;left:var(--pad);right:var(--pad);bottom:calc(var(--pad) + var(--safe-b));
+    display:flex;flex-direction:column;gap:10px}
+  .big{
+    width:100%;padding:26px 20px;border-radius:20px;font-size:22px;font-weight:600;
+    background:var(--amber);color:#26170A;
+  }
+  .big.start{background:var(--focal);color:#06231F}
+  .ghost{width:100%;padding:15px;border-radius:14px;color:var(--muted);border:1px solid var(--line)}
+
+  /* ---------- classify ---------- */
+  #classify{padding:var(--pad);gap:14px}
+  .duration-badge{margin:26px 0 4px;font-size:15px;color:var(--muted)}
+  .duration-big{font-size:56px;font-weight:300;font-variant-numeric:tabular-nums;line-height:1}
+  .q{margin:22px 0 2px;color:var(--muted);font-size:15px}
+  .choice{
+    display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+    padding:20px;border-radius:16px;background:var(--surface);border:2px solid transparent;
+  }
+  .choice:focus-visible,.big:focus-visible,.ghost:focus-visible,.tab:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+  .choice .dot{width:14px;height:14px;border-radius:50%;flex:0 0 auto}
+  .choice[data-t="focal"] .dot{background:var(--focal)}
+  .choice[data-t="grand"] .dot{background:var(--grand)}
+  .choice[aria-pressed="true"]{background:var(--surface-2)}
+  .choice[data-t="focal"][aria-pressed="true"]{border-color:var(--focal)}
+  .choice[data-t="grand"][aria-pressed="true"]{border-color:var(--grand)}
+  .choice small{display:block;color:var(--muted);font-size:13px}
+  textarea,input[type=text],input[type=datetime-local]{
+    width:100%;background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    color:var(--text);padding:14px;font:inherit;margin-top:10px
+  }
+  textarea{resize:vertical;min-height:64px}
+
+  /* ---------- history ---------- */
+  #history{padding:0 0 120px}
+  header.bar{
+    position:sticky;top:0;z-index:5;background:var(--ink);
+    padding:calc(env(safe-area-inset-top,0px) + 14px) var(--pad) 10px;
+    display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--line)
+  }
+  header.bar h1{font-size:19px;margin:0;font-weight:600}
+  .since{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
+  .wrap{padding:0 var(--pad)}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0 22px}
+  .stat{background:var(--surface);border-radius:14px;padding:13px 12px}
+  .stat b{display:block;font-size:23px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat span{color:var(--muted);font-size:12px}
+  h2{font-size:15px;font-weight:600;margin:26px 0 8px}
+  .chart{background:var(--surface);border-radius:16px;padding:14px 12px 8px}
+  .chart svg{display:block;width:100%;height:auto}
+  .legend{display:flex;gap:16px;color:var(--muted);font-size:12px;margin-top:8px;padding:0 2px}
+  .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+  .day{color:var(--muted);font-size:13px;margin:20px 0 6px}
+  .entry{display:flex;align-items:center;gap:13px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .entry .bar-dot{width:4px;align-self:stretch;border-radius:2px;flex:0 0 auto}
+  .entry .t{flex:1;min-width:0}
+  .entry .t b{font-weight:500;font-size:16px}
+  .entry .t small{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .entry .dur{font-variant-numeric:tabular-nums;font-size:17px}
+  .entry .del{padding:8px 4px;color:var(--muted);font-size:13px}
+  .empty{color:var(--muted);padding:34px 0;text-align:center}
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+  .tool{padding:15px;border-radius:14px;background:var(--surface);text-align:center;font-size:15px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    background:var(--surface);border-radius:14px;padding:14px;margin-top:10px}
+  .row small{display:block;color:var(--muted);font-size:13px}
+  .fab{position:fixed;left:var(--pad);right:var(--pad);bottom:calc(var(--pad) + var(--safe-b));z-index:6}
+  dialog{
+    border:0;border-radius:18px;background:var(--surface);color:var(--text);
+    padding:var(--pad);width:min(420px,92vw)
+  }
+  dialog::backdrop{background:rgba(4,12,18,.72)}
+  dialog h3{margin:0 0 4px;font-size:17px}
+  .dlg-actions{display:flex;gap:10px;margin-top:16px}
+  .dlg-actions button{flex:1;padding:14px;border-radius:12px;background:var(--surface-2)}
+  .dlg-actions .go{background:var(--focal);color:#06231F;font-weight:600}
+  .toast{
+    position:fixed;left:50%;transform:translateX(-50%);bottom:calc(100px + var(--safe-b));
+    background:var(--surface-2);border:1px solid var(--line);padding:12px 18px;border-radius:999px;
+    font-size:14px;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s
+  }
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ============ TIMER ============ -->
+<section id="timer" class="screen">
+  <div>
+    <div class="clock" id="clock">0:00</div>
+    <div class="clock-note" id="clockNote"><span class="pulse"></span>Timing now</div>
+  </div>
+  <div class="stack">
+    <button class="big" id="stopBtn">Stop timer</button>
+    <button class="ghost" id="cancelBtn">Cancel — don't log this</button>
+  </div>
+</section>
+
+<!-- ============ CLASSIFY ============ -->
+<section id="classify" class="screen">
+  <div class="wrap" style="padding:0">
+    <div class="duration-badge">Seizure lasted</div>
+    <div class="duration-big" id="finalDur">0:00</div>
+    <div class="q">What kind was it?</div>
+    <button class="choice" data-t="focal" aria-pressed="false">
+      <span class="dot"></span>
+      <span><b>Focal</b><small>Partial — twitching, staring, one area</small></span>
+    </button>
+    <div style="height:10px"></div>
+    <button class="choice" data-t="grand" aria-pressed="false">
+      <span class="dot"></span>
+      <span><b>Grand mal</b><small>Generalized — full body, collapse, paddling</small></span>
+    </button>
+    <textarea id="notes" placeholder="Notes (optional) — trigger, recovery time, meds given"></textarea>
+  </div>
+  <div class="stack">
+    <button class="big start" id="saveBtn">Save entry</button>
+    <button class="ghost" id="discardBtn">Discard</button>
+  </div>
+</section>
+
+<!-- ============ HISTORY ============ -->
+<section id="history" class="screen">
+  <header class="bar">
+    <h1>Seizure log</h1>
+    <span class="since" id="sinceLast"></span>
+  </header>
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><b id="s7">0</b><span>last 7 days</span></div>
+      <div class="stat"><b id="s30">0</b><span>last 30 days</span></div>
+      <div class="stat"><b id="sMed">—</b><span>median length</span></div>
+    </div>
+
+    <h2>Seizures per day</h2>
+    <div class="chart" id="chartFreq"></div>
+
+    <h2>Length of each seizure</h2>
+    <div class="chart" id="chartDur"></div>
+    <div class="legend">
+      <span><i style="background:var(--focal)"></i>Focal</span>
+      <span><i style="background:var(--grand)"></i>Grand mal</span>
+    </div>
+
+    <h2>All entries</h2>
+    <div id="list"></div>
+
+    <h2>Records</h2>
+    <div class="tools">
+      <button class="tool" id="expCsv">Export CSV</button>
+      <button class="tool" id="expJson">Backup JSON</button>
+      <button class="tool" id="impBtn">Import file</button>
+      <button class="tool" id="addBtn">Add past entry</button>
+    </div>
+    <input type="file" id="impFile" accept=".csv,.json,text/csv,application/json" hidden>
+
+    <div class="row">
+      <span>Start timing when the app opens<small>Turn off if you open the app to browse</small></span>
+      <input type="checkbox" id="autoStart" style="width:24px;height:24px;flex:0 0 auto">
+    </div>
+  </div>
+  <div class="fab"><button class="big start" id="startBtn">Start timer</button></div>
+</section>
+
+<!-- ============ ADD PAST ENTRY ============ -->
+<dialog id="addDlg">
+  <h3>Add a past entry</h3>
+  <label class="q" for="addWhen">When it started</label>
+  <input type="datetime-local" id="addWhen">
+  <label class="q" for="addDur">How long (m:ss or seconds)</label>
+  <input type="text" id="addDur" inputmode="numeric" placeholder="1:45">
+  <div class="q">Type</div>
+  <button class="choice" data-t="focal" aria-pressed="false"><span class="dot"></span><span><b>Focal</b></span></button>
+  <div style="height:8px"></div>
+  <button class="choice" data-t="grand" aria-pressed="false"><span class="dot"></span><span><b>Grand mal</b></span></button>
+  <input type="text" id="addNotes" placeholder="Notes (optional)">
+  <div class="dlg-actions">
+    <button id="addCancel">Cancel</button>
+    <button class="go" id="addSave">Add entry</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ---------- storage (falls back to memory if blocked) ---------- */
+const KEY="seizurelog.v1", RUN="seizurelog.running";
+const mem={};
+const store={
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return k in mem?mem[k]:null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){ delete mem[k]; } }
+};
+let records=[];
+try{ records=JSON.parse(store.get(KEY)||"[]"); }catch(e){ records=[]; }
+const save=()=>store.set(KEY,JSON.stringify(records));
+
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,"0");
+const fmt=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+":"+pad(s%60);};
+const typeName=t=>t==="grand"?"Grand mal":"Focal";
+const dayKey=d=>{const x=new Date(d);return x.getFullYear()+"-"+pad(x.getMonth()+1)+"-"+pad(x.getDate());};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("on");
+  clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("on"),2200);}
+function show(id){document.querySelectorAll(".screen").forEach(s=>s.classList.toggle("on",s.id===id));window.scrollTo(0,0);}
+
+/* ---------- timer ---------- */
+let startTs=null, tick=null, wake=null, pending=null, picked=null;
+
+async function keepAwake(on){
+  try{
+    if(on && "wakeLock" in navigator){ wake=await navigator.wakeLock.request("screen"); }
+    else if(wake){ await wake.release(); wake=null; }
+  }catch(e){}
+}
+function paint(){ $("#clock").textContent=fmt((Date.now()-startTs)/1000); }
+function startTimer(ts){
+  startTs=ts||Date.now();
+  store.set(RUN,String(startTs));
+  $("#clock").classList.remove("idle");
+  $("#clockNote").innerHTML='<span class="pulse"></span>Timing now';
+  paint(); clearInterval(tick); tick=setInterval(paint,250);
+  keepAwake(true); show("timer");
+}
+function stopTimer(){
+  clearInterval(tick); keepAwake(false); store.del(RUN);
+  const dur=Math.round((Date.now()-startTs)/1000);
+  pending={id:uid(),start:new Date(startTs).toISOString(),dur:dur,type:null,notes:""};
+  picked=null;
+  document.querySelectorAll("#classify .choice").forEach(b=>b.setAttribute("aria-pressed","false"));
+  $("#notes").value="";
+  $("#finalDur").textContent=fmt(dur);
+  show("classify");
+}
+$("#stopBtn").onclick=stopTimer;
+$("#cancelBtn").onclick=()=>{clearInterval(tick);keepAwake(false);store.del(RUN);render();show("history");};
+$("#startBtn").onclick=()=>startTimer();
+
+document.querySelectorAll("#classify .choice").forEach(b=>{
+  b.onclick=()=>{
+    picked=b.dataset.t;
+    document.querySelectorAll("#classify .choice").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+  };
+});
+$("#saveBtn").onclick=()=>{
+  if(!picked){ toast("Pick focal or grand mal first"); return; }
+  pending.type=picked; pending.notes=$("#notes").value.trim();
+  records.push(pending); records.sort((a,b)=>new Date(a.start)-new Date(b.start));
+  save(); pending=null; render(); show("history"); toast("Entry saved");
+};
+$("#discardBtn").onclick=()=>{pending=null;render();show("history");};
+
+/* ---------- stats + charts ---------- */
+function since(){
+  if(!records.length) return "";
+  const last=new Date(records[records.length-1].start).getTime();
+  const m=(Date.now()-last)/60000;
+  if(m<60) return Math.round(m)+" min since last";
+  const h=m/60; if(h<48) return Math.round(h)+" hr since last";
+  return Math.round(h/24)+" days since last";
+}
+function svgFreq(days=30){
+  const now=new Date(); now.setHours(0,0,0,0);
+  const buckets=[];
+  for(let i=days-1;i>=0;i--){
+    const d=new Date(now); d.setDate(d.getDate()-i);
+    buckets.push({d:d,k:dayKey(d),n:0});
+  }
+  const idx={}; buckets.forEach((b,i)=>idx[b.k]=i);
+  records.forEach(r=>{const i=idx[dayKey(r.start)]; if(i!==undefined) buckets[i].n++;});
+  const max=Math.max(1,...buckets.map(b=>b.n));
+  const W=300,H=110,bw=W/days;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per day, last ${days} days">`;
+  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
+    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
+  buckets.forEach((b,i)=>{
+    const h=(b.n/max)*H, x=i*bw+bw*0.18, w=bw*0.64;
+    if(b.n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="#FFB338"/>`;
+  });
+  const f=buckets[0].d, l=buckets[buckets.length-1].d, mo={month:"short",day:"numeric"};
+  out+=`<text x="0" y="${H+13}" fill="#8FA9B7" font-size="9">${f.toLocaleDateString(undefined,mo)}</text>`;
+  out+=`<text x="${W}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="end">${l.toLocaleDateString(undefined,mo)}</text>`;
+  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max}/day peak</text></svg>`;
+  return out;
+}
+function svgDur(days=30){
+  const cutoff=Date.now()-days*864e5;
+  const pts=records.filter(r=>new Date(r.start).getTime()>=cutoff);
+  if(!pts.length) return `<svg viewBox="0 0 300 110"><text x="150" y="58" fill="#8FA9B7" font-size="11" text-anchor="middle">No entries in the last ${days} days</text></svg>`;
+  const W=300,H=110, t0=cutoff, t1=Date.now();
+  const maxD=Math.max(60,...pts.map(p=>p.dur));
+  const X=t=>((t-t0)/(t1-t0))*(W-14)+7, Y=d=>H-(d/maxD)*(H-14)-4;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Length of each seizure">`;
+  [0,.5,1].forEach(f=>{const y=Y(maxD*f);
+    out+=`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" stroke="#25404F" stroke-width=".5"/>`;
+    out+=`<text x="2" y="${(y-3).toFixed(1)}" fill="#8FA9B7" font-size="9">${fmt(maxD*f)}</text>`;});
+  const sorted=pts.slice().sort((a,b)=>new Date(a.start)-new Date(b.start));
+  out+=`<polyline fill="none" stroke="#3E6479" stroke-width="1" points="${
+    sorted.map(p=>X(new Date(p.start).getTime()).toFixed(1)+","+Y(p.dur).toFixed(1)).join(" ")}"/>`;
+  sorted.forEach(p=>{
+    out+=`<circle cx="${X(new Date(p.start).getTime()).toFixed(1)}" cy="${Y(p.dur).toFixed(1)}" r="3.4" fill="${p.type==="grand"?"#E4695E":"#58C0B0"}"/>`;
+  });
+  out+=`</svg>`;
+  return out;
+}
+function render(){
+  const now=Date.now();
+  const in7=records.filter(r=>now-new Date(r.start).getTime()<7*864e5).length;
+  const in30=records.filter(r=>now-new Date(r.start).getTime()<30*864e5).length;
+  $("#s7").textContent=in7; $("#s30").textContent=in30;
+  if(records.length){
+    const ds=records.map(r=>r.dur).sort((a,b)=>a-b);
+    $("#sMed").textContent=fmt(ds[Math.floor(ds.length/2)]);
+  } else $("#sMed").textContent="—";
+  $("#sinceLast").textContent=since();
+  $("#chartFreq").innerHTML=svgFreq();
+  $("#chartDur").innerHTML=svgDur();
+
+  const list=$("#list");
+  if(!records.length){ list.innerHTML='<div class="empty">Nothing logged yet. The timer starts the moment you open this app.</div>'; return; }
+  const byDay={};
+  records.slice().reverse().forEach(r=>{(byDay[dayKey(r.start)]=byDay[dayKey(r.start)]||[]).push(r);});
+  let html="";
+  Object.keys(byDay).forEach(k=>{
+    const d=new Date(byDay[k][0].start);
+    html+=`<div class="day">${d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})} — ${byDay[k].length} ${byDay[k].length>1?"seizures":"seizure"}</div>`;
+    byDay[k].forEach(r=>{
+      const t=new Date(r.start).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+      html+=`<div class="entry">
+        <span class="bar-dot" style="background:${r.type==="grand"?"#E4695E":"#58C0B0"}"></span>
+        <span class="t"><b>${typeName(r.type)}</b><small>${t}${r.notes?" · "+esc(r.notes):""}</small></span>
+        <span class="dur">${fmt(r.dur)}</span>
+        <button class="del" data-id="${r.id}" aria-label="Delete entry">Delete</button>
+      </div>`;
+    });
+  });
+  list.innerHTML=html;
+  list.querySelectorAll(".del").forEach(b=>b.onclick=()=>{
+    if(!confirm("Delete this entry?"))return;
+    records=records.filter(r=>r.id!==b.dataset.id); save(); render(); toast("Entry deleted");
+  });
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* ---------- export ---------- */
+function download(name,text,mime){
+  const b=new Blob([text],{type:mime});
+  const u=URL.createObjectURL(b), a=document.createElement("a");
+  a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),1500);
+}
+function csv(){
+  const rows=[["date","time","start_iso","duration_seconds","duration_mmss","type","notes"]];
+  records.forEach(r=>{const d=new Date(r.start);
+    rows.push([d.toLocaleDateString(),d.toLocaleTimeString(),r.start,r.dur,fmt(r.dur),typeName(r.type),r.notes||""]);});
+  return rows.map(r=>r.map(v=>/[",\n]/.test(v)?'"'+String(v).replace(/"/g,'""')+'"':v).join(",")).join("\n");
+}
+$("#expCsv").onclick=async()=>{
+  const name="seizure-log-"+dayKey(Date.now())+".csv", text=csv();
+  if(navigator.canShare){
+    const file=new File([text],name,{type:"text/csv"});
+    if(navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file],title:"Seizure log"}); return; }catch(e){} }
+  }
+  download(name,text,"text/csv");
+};
+$("#expJson").onclick=()=>download("seizure-log-backup-"+dayKey(Date.now())+".json",JSON.stringify(records,null,2),"application/json");
+
+/* ---------- import ---------- */
+$("#impBtn").onclick=()=>$("#impFile").click();
+$("#impFile").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ merge(parse(rd.result,f.name)); }catch(err){ toast("Couldn't read that file"); } e.target.value=""; };
+  rd.readAsText(f);
+};
+function parse(text,name){
+  if(/\.json$/i.test(name)||text.trim().startsWith("[")) return JSON.parse(text).map(normalize);
+  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+  const head=splitCsv(lines.shift()).map(h=>h.trim().toLowerCase());
+  return lines.map(l=>{const c=splitCsv(l),o={};head.forEach((h,i)=>o[h]=(c[i]||"").trim());return normalize(o);});
+}
+function splitCsv(line){
+  const out=[];let cur="",q=false;
+  for(let i=0;i<line.length;i++){const ch=line[i];
+    if(q){ if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;} else if(ch==='"'){q=false;} else cur+=ch; }
+    else if(ch==='"'){q=true;} else if(ch===","){out.push(cur);cur="";} else cur+=ch;}
+  out.push(cur); return out;
+}
+function normalize(o){
+  const startRaw=o.start_iso||o.start||o.datetime||o.timestamp||
+    ((o.date||"")+" "+(o.time||"")).trim();
+  const d=new Date(startRaw);
+  if(isNaN(d)) throw new Error("bad date");
+  let dur=o.duration_seconds||o.dur||o.duration||o.duration_mmss||o.length||0;
+  if(typeof dur==="string"&&dur.includes(":")){const p=dur.split(":").map(Number);dur=p[0]*60+(p[1]||0);}
+  dur=Math.round(Number(dur))||0;
+  const t=String(o.type||o.seizure_type||"").toLowerCase();
+  return {id:o.id||uid(),start:d.toISOString(),dur:dur,
+    type:(t.includes("grand")||t.includes("general")||t.includes("tonic"))?"grand":"focal",
+    notes:o.notes||o.note||""};
+}
+function merge(incoming){
+  const seen=new Set(records.map(r=>r.start.slice(0,16)+"|"+r.dur));
+  let added=0;
+  incoming.forEach(r=>{const k=r.start.slice(0,16)+"|"+r.dur;
+    if(!seen.has(k)){records.push(r);seen.add(k);added++;}});
+  records.sort((a,b)=>new Date(a.start)-new Date(b.start));
+  save(); render();
+  toast(added?added+" entr"+(added===1?"y":"ies")+" imported":"Already up to date — nothing new");
+}
+
+/* ---------- add past entry ---------- */
+const dlg=$("#addDlg"); let addType=null;
+$("#addBtn").onclick=()=>{
+  addType=null; dlg.querySelectorAll(".choice").forEach(b=>b.setAttribute("aria-pressed","false"));
+  const now=new Date(); now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  $("#addWhen").value=now.toISOString().slice(0,16);
+  $("#addDur").value=""; $("#addNotes").value=""; dlg.showModal();
+};
+dlg.querySelectorAll(".choice").forEach(b=>b.onclick=()=>{
+  addType=b.dataset.t; dlg.querySelectorAll(".choice").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+});
+$("#addCancel").onclick=()=>dlg.close();
+$("#addSave").onclick=()=>{
+  const when=$("#addWhen").value, raw=$("#addDur").value.trim();
+  if(!when||!raw||!addType){ toast("Fill in time, length and type"); return; }
+  let dur=raw.includes(":")?raw.split(":").reduce((a,b)=>a*60+Number(b),0):Number(raw);
+  if(!dur||isNaN(dur)){ toast("Length should look like 1:45"); return; }
+  records.push({id:uid(),start:new Date(when).toISOString(),dur:Math.round(dur),type:addType,notes:$("#addNotes").value.trim()});
+  records.sort((a,b)=>new Date(a.start)-new Date(b.start));
+  save(); render(); dlg.close(); toast("Entry added");
+};
+
+/* ---------- settings + launch ---------- */
+const auto=$("#autoStart");
+auto.checked=store.get("seizurelog.auto")!=="0";
+auto.onchange=()=>store.set("seizurelog.auto",auto.checked?"1":"0");
+
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&startTs&&tick) keepAwake(true); });
+
+render();
+const resume=Number(store.get(RUN)||0);
+if(resume && Date.now()-resume < 2*3600e3){ startTimer(resume); }
+else if(auto.checked){ startTimer(); }
+else { show("history"); }
+
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+</script>
+</body>
+</html>
