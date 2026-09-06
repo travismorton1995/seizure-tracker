@@ -474,7 +474,7 @@ function svgDur(days,W,H){
   const {from:t0,to:t1}=windowBounds(days);
   const pts=records.filter(r=>{const t=new Date(r.start).getTime(); return t>=t0&&t<t1;});
   if(!pts.length) return `<svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}" fill="#8FA9B7" font-size="11" text-anchor="middle">No entries in this range</text></svg>`;
-  const dataMax=Math.max(60,...pts.map(p=>p.dur));
+  const dataMax=Math.max(1,...pts.map(p=>p.dur));
   const axisMax=dataMax*1.10;
   const X=t=>((t-t0)/(t1-t0))*(W-14)+7, Y=d=>H-(d/axisMax)*(H-14)-4;
   let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Length of each seizure">`;
