@@ -115,8 +115,16 @@
   .entry .t b{font-weight:500;font-size:16px}
   .entry .t small{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .entry .dur{font-variant-numeric:tabular-nums;font-size:17px}
+  .entry .edit{padding:8px 6px;color:var(--focal);font-size:13px}
   .entry .del{padding:8px 4px;color:var(--muted);font-size:13px}
   .empty{color:var(--muted);padding:34px 0;text-align:center}
+  .date-filters{display:flex;align-items:center;gap:8px;margin:2px 0 14px}
+  .date-filters input[type=date]{flex:1;min-width:0;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;color:var(--text);padding:10px;font:inherit;color-scheme:dark}
+  .to-sep{color:var(--muted);font-size:13px;flex:0 0 auto}
+  .ghost-sm{color:var(--muted);font-size:13px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;flex:0 0 auto}
+  .list-more{width:100%;padding:13px;border-radius:14px;background:var(--surface);color:var(--muted);
+    margin-top:12px;font-size:14px;text-align:center}
   .tools{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
   .tool{padding:15px;border-radius:14px;background:var(--surface);text-align:center;font-size:15px}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;
@@ -195,6 +203,10 @@
 
     <div class="subhead">Seizures per day</div>
     <div class="chart" id="chartFreq" data-chart="freq"></div>
+    <div class="legend">
+      <span><i style="background:var(--focal)"></i>Focal</span>
+      <span><i style="background:var(--grand)"></i>Grand mal</span>
+    </div>
 
     <div class="subhead">Length of each seizure</div>
     <div class="chart" id="chartDur" data-chart="dur"></div>
@@ -203,14 +215,19 @@
       <span><i style="background:var(--grand)"></i>Grand mal</span>
     </div>
 
-    <div class="subhead">By day of week</div>
-    <div class="chart" id="chartDow" data-chart="dow"></div>
-
     <div class="subhead">By time of day</div>
     <div class="chart" id="chartHour" data-chart="hour"></div>
 
     <h2>All entries</h2>
+    <div class="range-pills" id="typeFilterPills" role="group" aria-label="Filter by type"></div>
+    <div class="date-filters">
+      <input type="date" id="filterFrom" aria-label="From date">
+      <span class="to-sep">to</span>
+      <input type="date" id="filterTo" aria-label="To date">
+      <button class="ghost-sm" id="clearFilters">Clear</button>
+    </div>
     <div id="list"></div>
+    <button class="list-more" id="listMore" hidden></button>
 
     <h2>Records</h2>
     <div class="tools">
@@ -231,7 +248,7 @@
 
 <!-- ============ ADD PAST ENTRY ============ -->
 <dialog id="addDlg">
-  <h3>Add a past entry</h3>
+  <h3 id="addDlgTitle">Add a past entry</h3>
   <label class="q" for="addWhen">When it started</label>
   <input type="datetime-local" id="addWhen">
   <label class="q" for="addDur">How long (m:ss or seconds)</label>
@@ -339,7 +356,7 @@ function since(){
   return Math.round(h/24)+" days since last";
 }
 /* ---------- analytics range ---------- */
-const RANGES=[{label:"7D",v:7},{label:"14D",v:14},{label:"30D",v:30},{label:"90D",v:90},{label:"6M",v:182},{label:"1Y",v:365},{label:"All",v:Infinity}];
+const RANGES=[{label:"1D",v:1},{label:"7D",v:7},{label:"14D",v:14},{label:"30D",v:30},{label:"90D",v:90},{label:"6M",v:182},{label:"1Y",v:365},{label:"All",v:Infinity}];
 let chartDays=(()=>{ const raw=store.get("seizurelog.range"); const v=raw==="Infinity"?Infinity:Number(raw);
   return RANGES.some(r=>r.v===v)?v:30; })();
 function setRange(v){
@@ -347,17 +364,18 @@ function setRange(v){
   renderPills($("#rangePills")); drawCharts();
   if(modalDlg.open){ renderPills($("#modalPills")); drawModal(); }
 }
-function renderPills(container){
+function renderPillGroup(container,options,current,onSelect){
   if(!container) return;
   container.innerHTML="";
-  RANGES.forEach(r=>{
+  options.forEach(o=>{
     const b=document.createElement("button");
-    b.type="button"; b.className="pill"; b.textContent=r.label;
-    b.setAttribute("aria-pressed",String(r.v===chartDays));
-    b.onclick=()=>setRange(r.v);
+    b.type="button"; b.className="pill"; b.textContent=o.label;
+    b.setAttribute("aria-pressed",String(o.v===current));
+    b.onclick=()=>onSelect(o.v);
     container.appendChild(b);
   });
 }
+function renderPills(container){ renderPillGroup(container,RANGES,chartDays,setRange); }
 function effectiveDays(){
   if(chartDays!==Infinity) return chartDays;
   if(!records.length) return 30;
@@ -383,19 +401,21 @@ function svgFreq(days,W,H){
     for(let i=months-1;i>=0;i--){ const from=new Date(now.getFullYear(),now.getMonth()-i,1); const to=new Date(now.getFullYear(),now.getMonth()-i+1,1);
       buckets.push({from,to,label:from.toLocaleDateString(undefined,{month:"short"})}); }
   }
-  buckets.forEach(b=>b.n=0);
+  buckets.forEach(b=>{b.focal=0;b.grand=0;});
   records.forEach(r=>{
     const t=new Date(r.start).getTime();
-    for(const b of buckets){ if(t>=b.from.getTime()&&t<b.to.getTime()){ b.n++; break; } }
+    for(const b of buckets){ if(t>=b.from.getTime()&&t<b.to.getTime()){ r.type==="grand"?b.grand++:b.focal++; break; } }
   });
-  const max=Math.max(1,...buckets.map(b=>b.n));
+  const max=Math.max(1,...buckets.map(b=>b.focal+b.grand));
   const n=buckets.length, bw=W/n;
-  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per ${unit}, last ${span} days">`;
+  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per ${unit}, last ${span} days, focal and grand mal stacked">`;
   for(let g=0;g<=max;g++){const y=H-(g/max)*H;
     out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
   buckets.forEach((b,i)=>{
-    const h=(b.n/max)*H, x=i*bw+bw*0.18, w=Math.max(1,bw*0.64);
-    if(b.n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="#FFB338"/>`;
+    const x=i*bw+bw*0.18, w=Math.max(1,bw*0.64);
+    const focalH=(b.focal/max)*H, grandH=(b.grand/max)*H;
+    if(b.focal) out+=`<rect x="${x.toFixed(1)}" y="${(H-focalH).toFixed(1)}" width="${w.toFixed(1)}" height="${focalH.toFixed(1)}" rx="1.5" fill="#58C0B0"/>`;
+    if(b.grand) out+=`<rect x="${x.toFixed(1)}" y="${(H-focalH-grandH).toFixed(1)}" width="${w.toFixed(1)}" height="${grandH.toFixed(1)}" rx="1.5" fill="#E4695E"/>`;
   });
   out+=`<text x="0" y="${H+13}" fill="#8FA9B7" font-size="9">${buckets[0].label}</text>`;
   out+=`<text x="${W}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="end">${buckets[buckets.length-1].label}</text>`;
@@ -424,25 +444,6 @@ function svgDur(days,W,H){
   out+=`</svg>`;
   return out;
 }
-function svgDow(days,W,H){
-  W=W||300; H=H||110; days=days===undefined?30:days;
-  const span=days===Infinity?effectiveDays():days;
-  const cutoff=Date.now()-span*864e5;
-  const counts=[0,0,0,0,0,0,0];
-  records.forEach(r=>{ const t=new Date(r.start); if(t.getTime()>=cutoff) counts[t.getDay()]++; });
-  const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const max=Math.max(1,...counts), bw=W/7;
-  let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures by day of week">`;
-  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
-    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
-  counts.forEach((n,i)=>{
-    const h=(n/max)*H, x=i*bw+bw*0.18, w=bw*0.64;
-    if(n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="#58C0B0"/>`;
-    out+=`<text x="${(x+w/2).toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="middle">${names[i]}</text>`;
-  });
-  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max} peak</text></svg>`;
-  return out;
-}
 function svgHour(days,W,H){
   W=W||300; H=H||110; days=days===undefined?30:days;
   const span=days===Infinity?effectiveDays():days;
@@ -467,7 +468,6 @@ function svgHour(days,W,H){
 function drawCharts(){
   $("#chartFreq").innerHTML=svgFreq(chartDays);
   $("#chartDur").innerHTML=svgDur(chartDays);
-  $("#chartDow").innerHTML=svgDow(chartDays);
   $("#chartHour").innerHTML=svgHour(chartDays);
 }
 
@@ -476,7 +476,6 @@ const modalDlg=$("#chartDlg");
 const chartMeta={
   freq:{title:"Seizures per day", fn:svgFreq},
   dur:{title:"Length of each seizure", fn:svgDur},
-  dow:{title:"Seizures by day of week", fn:svgDow},
   hour:{title:"Seizures by time of day", fn:svgHour}
 };
 let openKey=null;
@@ -486,6 +485,7 @@ function openModal(key){
   $("#modalTitle").textContent=chartMeta[key].title;
   renderPills($("#modalPills"));
   modalDlg.showModal();
+  enterChartFullscreen();
   requestAnimationFrame(()=>requestAnimationFrame(drawModal));
 }
 function drawModal(){
@@ -495,14 +495,99 @@ function drawModal(){
   if(w<10||h<10) return;
   body.innerHTML=chartMeta[openKey].fn(chartDays,w,h);
 }
+/* The manifest locks the installed app to portrait, so the phone won't
+   rotate the fullscreen chart unless we request real Fullscreen + unlock
+   orientation ourselves while the modal is open (both revert on close). */
+function enterChartFullscreen(){
+  try{
+    const req=modalDlg.requestFullscreen||modalDlg.webkitRequestFullscreen;
+    if(req) req.call(modalDlg).catch?.(()=>{});
+  }catch(e){}
+  try{ if(screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); }catch(e){}
+}
+function exitChartFullscreen(){
+  try{
+    if(document.fullscreenElement||document.webkitFullscreenElement){
+      (document.exitFullscreen||document.webkitExitFullscreen).call(document).catch?.(()=>{});
+    }
+  }catch(e){}
+}
 $("#modalClose").onclick=()=>modalDlg.close();
-modalDlg.addEventListener("close",()=>{openKey=null;});
+modalDlg.addEventListener("close",()=>{openKey=null; exitChartFullscreen();});
+document.addEventListener("fullscreenchange",()=>{
+  if(!document.fullscreenElement && modalDlg.open) modalDlg.close();
+  else if(modalDlg.open) setTimeout(drawModal,60);
+});
 window.addEventListener("resize",()=>{ if(modalDlg.open) drawModal(); });
 if(window.visualViewport) visualViewport.addEventListener("resize",()=>{ if(modalDlg.open) drawModal(); });
 if(screen.orientation && screen.orientation.addEventListener){
   screen.orientation.addEventListener("change",()=>{ if(modalDlg.open) setTimeout(drawModal,60); });
 } else {
   window.addEventListener("orientationchange",()=>{ if(modalDlg.open) setTimeout(drawModal,150); });
+}
+/* ---------- entries list: filter + collapse + edit ---------- */
+const TYPE_FILTERS=[{label:"All",v:"all"},{label:"Focal",v:"focal"},{label:"Grand mal",v:"grand"}];
+let listTypeFilter="all", listFrom="", listTo="", listExpanded=false;
+const LIST_CAP=8;
+function renderTypeFilter(){
+  renderPillGroup($("#typeFilterPills"),TYPE_FILTERS,listTypeFilter,v=>{ listTypeFilter=v; renderTypeFilter(); renderList(); });
+}
+$("#filterFrom").onchange=()=>{ listFrom=$("#filterFrom").value; renderList(); };
+$("#filterTo").onchange=()=>{ listTo=$("#filterTo").value; renderList(); };
+$("#clearFilters").onclick=()=>{
+  listTypeFilter="all"; listFrom=""; listTo="";
+  $("#filterFrom").value=""; $("#filterTo").value="";
+  renderTypeFilter(); renderList();
+};
+function renderList(){
+  const list=$("#list"), moreBtn=$("#listMore");
+  if(!records.length){
+    list.innerHTML='<div class="empty">Nothing logged yet. The timer starts the moment you open this app.</div>';
+    moreBtn.hidden=true; return;
+  }
+  const filtered=records.filter(r=>{
+    if(listTypeFilter!=="all" && r.type!==listTypeFilter) return false;
+    const k=dayKey(r.start);
+    if(listFrom && k<listFrom) return false;
+    if(listTo && k>listTo) return false;
+    return true;
+  });
+  if(!filtered.length){
+    list.innerHTML='<div class="empty">No entries match these filters.</div>';
+    moreBtn.hidden=true; return;
+  }
+  const sorted=filtered.slice().reverse();
+  const shown=listExpanded?sorted:sorted.slice(0,LIST_CAP);
+  const byDay={};
+  shown.forEach(r=>{(byDay[dayKey(r.start)]=byDay[dayKey(r.start)]||[]).push(r);});
+  let html="";
+  Object.keys(byDay).forEach(k=>{
+    const d=new Date(byDay[k][0].start);
+    html+=`<div class="day">${d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})} — ${byDay[k].length} ${byDay[k].length>1?"seizures":"seizure"}</div>`;
+    byDay[k].forEach(r=>{
+      const t=new Date(r.start).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+      html+=`<div class="entry">
+        <span class="bar-dot" style="background:${r.type==="grand"?"#E4695E":"#58C0B0"}"></span>
+        <span class="t"><b>${typeName(r.type)}</b><small>${t}${r.notes?" · "+esc(r.notes):""}</small></span>
+        <span class="dur">${fmt(r.dur)}</span>
+        <button class="edit" data-id="${r.id}" aria-label="Edit entry">Edit</button>
+        <button class="del" data-id="${r.id}" aria-label="Delete entry">Delete</button>
+      </div>`;
+    });
+  });
+  list.innerHTML=html;
+  list.querySelectorAll(".edit").forEach(b=>b.onclick=()=>{
+    const r=records.find(x=>x.id===b.dataset.id); if(r) openEditDlg(r);
+  });
+  list.querySelectorAll(".del").forEach(b=>b.onclick=()=>{
+    if(!confirm("Delete this entry?"))return;
+    records=records.filter(r=>r.id!==b.dataset.id); save(); render(); toast("Entry deleted");
+  });
+  if(sorted.length>LIST_CAP){
+    moreBtn.hidden=false;
+    moreBtn.textContent=listExpanded?"Show fewer":`Show all ${sorted.length}`;
+    moreBtn.onclick=()=>{ listExpanded=!listExpanded; renderList(); };
+  } else moreBtn.hidden=true;
 }
 function render(){
   const now=Date.now();
@@ -516,30 +601,8 @@ function render(){
   $("#sinceLast").textContent=since();
   renderPills($("#rangePills"));
   drawCharts();
-
-  const list=$("#list");
-  if(!records.length){ list.innerHTML='<div class="empty">Nothing logged yet. The timer starts the moment you open this app.</div>'; return; }
-  const byDay={};
-  records.slice().reverse().forEach(r=>{(byDay[dayKey(r.start)]=byDay[dayKey(r.start)]||[]).push(r);});
-  let html="";
-  Object.keys(byDay).forEach(k=>{
-    const d=new Date(byDay[k][0].start);
-    html+=`<div class="day">${d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})} — ${byDay[k].length} ${byDay[k].length>1?"seizures":"seizure"}</div>`;
-    byDay[k].forEach(r=>{
-      const t=new Date(r.start).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
-      html+=`<div class="entry">
-        <span class="bar-dot" style="background:${r.type==="grand"?"#E4695E":"#58C0B0"}"></span>
-        <span class="t"><b>${typeName(r.type)}</b><small>${t}${r.notes?" · "+esc(r.notes):""}</small></span>
-        <span class="dur">${fmt(r.dur)}</span>
-        <button class="del" data-id="${r.id}" aria-label="Delete entry">Delete</button>
-      </div>`;
-    });
-  });
-  list.innerHTML=html;
-  list.querySelectorAll(".del").forEach(b=>b.onclick=()=>{
-    if(!confirm("Delete this entry?"))return;
-    records=records.filter(r=>r.id!==b.dataset.id); save(); render(); toast("Entry deleted");
-  });
+  renderTypeFilter();
+  renderList();
 }
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
@@ -610,14 +673,25 @@ function merge(incoming){
   toast(added?added+" entr"+(added===1?"y":"ies")+" imported":"Already up to date — nothing new");
 }
 
-/* ---------- add past entry ---------- */
-const dlg=$("#addDlg"); let addType=null;
+/* ---------- add / edit past entry ---------- */
+const dlg=$("#addDlg"); let addType=null, editId=null;
 $("#addBtn").onclick=()=>{
-  addType=null; dlg.querySelectorAll(".choice").forEach(b=>b.setAttribute("aria-pressed","false"));
+  editId=null; addType=null; dlg.querySelectorAll(".choice").forEach(b=>b.setAttribute("aria-pressed","false"));
+  $("#addDlgTitle").textContent="Add a past entry"; $("#addSave").textContent="Add entry";
   const now=new Date(); now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
   $("#addWhen").value=now.toISOString().slice(0,16);
   $("#addDur").value=""; $("#addNotes").value=""; dlg.showModal();
 };
+function openEditDlg(rec){
+  editId=rec.id; addType=rec.type;
+  dlg.querySelectorAll(".choice").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.t===rec.type)));
+  $("#addDlgTitle").textContent="Edit entry"; $("#addSave").textContent="Save changes";
+  const d=new Date(rec.start); d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  $("#addWhen").value=d.toISOString().slice(0,16);
+  $("#addDur").value=fmt(rec.dur);
+  $("#addNotes").value=rec.notes||"";
+  dlg.showModal();
+}
 dlg.querySelectorAll(".choice").forEach(b=>b.onclick=()=>{
   addType=b.dataset.t; dlg.querySelectorAll(".choice").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
 });
@@ -627,9 +701,15 @@ $("#addSave").onclick=()=>{
   if(!when||!raw||!addType){ toast("Fill in time, length and type"); return; }
   let dur=raw.includes(":")?raw.split(":").reduce((a,b)=>a*60+Number(b),0):Number(raw);
   if(!dur||isNaN(dur)){ toast("Length should look like 1:45"); return; }
-  records.push({id:uid(),start:new Date(when).toISOString(),dur:Math.round(dur),type:addType,notes:$("#addNotes").value.trim()});
+  const wasEdit=!!editId;
+  if(wasEdit){
+    const rec=records.find(r=>r.id===editId);
+    rec.start=new Date(when).toISOString(); rec.dur=Math.round(dur); rec.type=addType; rec.notes=$("#addNotes").value.trim();
+  } else {
+    records.push({id:uid(),start:new Date(when).toISOString(),dur:Math.round(dur),type:addType,notes:$("#addNotes").value.trim()});
+  }
   records.sort((a,b)=>new Date(a.start)-new Date(b.start));
-  save(); render(); dlg.close(); toast("Entry added");
+  save(); render(); dlg.close(); toast(wasEdit?"Entry updated":"Entry added");
 };
 
 /* ---------- settings + launch ---------- */
