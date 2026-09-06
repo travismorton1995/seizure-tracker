@@ -80,10 +80,15 @@
   header.bar h1{font-size:19px;margin:0;font-weight:600}
   .since{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
   .wrap{padding:0 var(--pad)}
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0 22px}
+  .stats-period{color:var(--muted);font-size:12px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 22px}
   .stat{background:var(--surface);border-radius:14px;padding:13px 12px}
   .stat b{display:block;font-size:23px;font-weight:600;font-variant-numeric:tabular-nums}
-  .stat span{color:var(--muted);font-size:12px}
+  .stat span{display:block;color:var(--muted);font-size:12px}
+  .stat .delta{display:block;font-style:normal;font-size:11px;color:var(--muted);margin-top:1px}
+  .today-stat{padding:22px 0 10px;text-align:center}
+  .today-num{font-size:56px;font-weight:300;line-height:1;color:var(--amber);font-variant-numeric:tabular-nums}
+  .today-sub{color:var(--muted);margin-top:8px;font-size:14px}
   h2{font-size:15px;font-weight:600;margin:26px 0 8px}
   .subhead{font-size:13px;font-weight:600;color:var(--muted);margin:22px 0 6px}
   .range-pills{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 4px;margin-bottom:2px;scrollbar-width:none}
@@ -127,6 +132,7 @@
     margin-top:12px;font-size:14px;text-align:center}
   .tools{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
   .tool{padding:15px;border-radius:14px;background:var(--surface);text-align:center;font-size:15px}
+  #addBtn{background:var(--amber);color:#26170A;font-weight:600}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;
     background:var(--surface);border-radius:14px;padding:14px;margin-top:10px}
   .row small{display:block;color:var(--muted);font-size:13px}
@@ -192,10 +198,11 @@
     <span class="since" id="sinceLast"></span>
   </header>
   <div class="wrap">
+    <div class="stats-period" id="statsPeriod"></div>
     <div class="stats">
-      <div class="stat"><b id="s7">0</b><span>last 7 days</span></div>
-      <div class="stat"><b id="s30">0</b><span>last 30 days</span></div>
-      <div class="stat"><b id="sMed">—</b><span>median length</span></div>
+      <div class="stat"><b id="sTotal">0</b><span>seizures</span></div>
+      <div class="stat"><b id="sAvgDur">—</b><span>avg length<i class="delta" id="sAvgDurDelta"></i></span></div>
+      <div class="stat"><b id="sAvgGap">—</b><span>avg between<i class="delta" id="sAvgGapDelta"></i></span></div>
     </div>
 
     <h2>Analytics</h2>
@@ -356,12 +363,26 @@ function since(){
   return Math.round(h/24)+" days since last";
 }
 /* ---------- analytics range ---------- */
-const RANGES=[{label:"1D",v:1},{label:"7D",v:7},{label:"14D",v:14},{label:"30D",v:30},{label:"90D",v:90},{label:"6M",v:182},{label:"1Y",v:365},{label:"All",v:Infinity}];
-let chartDays=(()=>{ const raw=store.get("seizurelog.range"); const v=raw==="Infinity"?Infinity:Number(raw);
-  return RANGES.some(r=>r.v===v)?v:30; })();
+const TODAY_KEY="today";
+const RANGES=[
+  {label:"Today",v:TODAY_KEY,desc:"Today"},
+  {label:"7D",v:7,desc:"Last 7 days"},
+  {label:"14D",v:14,desc:"Last 14 days"},
+  {label:"30D",v:30,desc:"Last 30 days"},
+  {label:"90D",v:90,desc:"Last 90 days"},
+  {label:"6M",v:182,desc:"Last 6 months"},
+  {label:"1Y",v:365,desc:"Last year"},
+  {label:"All",v:Infinity,desc:"All time"}
+];
+let chartDays=(()=>{
+  const raw=store.get("seizurelog.range");
+  if(raw===TODAY_KEY) return TODAY_KEY;
+  const v=raw==="Infinity"?Infinity:Number(raw);
+  return RANGES.some(r=>r.v===v)?v:30;
+})();
 function setRange(v){
   chartDays=v; store.set("seizurelog.range",String(v));
-  renderPills($("#rangePills")); drawCharts();
+  renderPills($("#rangePills")); drawCharts(); updateStatsBanner();
   if(modalDlg.open){ renderPills($("#modalPills")); drawModal(); }
 }
 function renderPillGroup(container,options,current,onSelect){
@@ -382,7 +403,22 @@ function effectiveDays(){
   const earliest=Math.min(...records.map(r=>new Date(r.start).getTime()));
   return Math.max(1,Math.ceil((Date.now()-earliest)/864e5));
 }
-
+/* Resolves any range value (a day count, TODAY_KEY, or Infinity) to a
+   concrete [from,to) window in ms, since "today" isn't a fixed multiple
+   of 24h back from now. */
+function windowBounds(days){
+  const to=Date.now();
+  if(days===TODAY_KEY){ const from=new Date(); from.setHours(0,0,0,0); return {from:from.getTime(),to}; }
+  const span=days===Infinity?effectiveDays():days;
+  return {from:to-span*864e5,to};
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function pickLabelIndices(n,maxLabels){
+  if(n<=maxLabels) return Array.from({length:n},(_,i)=>i);
+  const idx=[];
+  for(let i=0;i<maxLabels;i++) idx.push(Math.round(i*(n-1)/(maxLabels-1)));
+  return [...new Set(idx)];
+}
 function svgFreq(days,W,H){
   W=W||300; H=H||110; days=days===undefined?30:days;
   const span=days===Infinity?effectiveDays():days;
@@ -406,67 +442,93 @@ function svgFreq(days,W,H){
     const t=new Date(r.start).getTime();
     for(const b of buckets){ if(t>=b.from.getTime()&&t<b.to.getTime()){ r.type==="grand"?b.grand++:b.focal++; break; } }
   });
-  const max=Math.max(1,...buckets.map(b=>b.focal+b.grand));
+  const dataMax=Math.max(1,...buckets.map(b=>b.focal+b.grand));
+  const axisMax=dataMax*1.10;
   const n=buckets.length, bw=W/n;
   let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures per ${unit}, last ${span} days, focal and grand mal stacked">`;
-  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
-    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
+  [0,.5,1].forEach(f=>{
+    const y=H-f*H;
+    out+=`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" stroke="#25404F" stroke-width=".5"/>`;
+    out+=`<text x="2" y="${(y-3).toFixed(1)}" fill="#8FA9B7" font-size="9">${Math.round(axisMax*f)}</text>`;
+  });
   buckets.forEach((b,i)=>{
+    const total=b.focal+b.grand;
     const x=i*bw+bw*0.18, w=Math.max(1,bw*0.64);
-    const focalH=(b.focal/max)*H, grandH=(b.grand/max)*H;
+    const focalH=(b.focal/axisMax)*H, grandH=(b.grand/axisMax)*H;
+    if(total) out+=`<g><title>${esc(b.label)}: ${total} seizure${total===1?"":"s"} (${b.focal} focal, ${b.grand} grand mal)</title>`;
     if(b.focal) out+=`<rect x="${x.toFixed(1)}" y="${(H-focalH).toFixed(1)}" width="${w.toFixed(1)}" height="${focalH.toFixed(1)}" rx="1.5" fill="#58C0B0"/>`;
     if(b.grand) out+=`<rect x="${x.toFixed(1)}" y="${(H-focalH-grandH).toFixed(1)}" width="${w.toFixed(1)}" height="${grandH.toFixed(1)}" rx="1.5" fill="#E4695E"/>`;
+    if(total) out+="</g>";
   });
-  out+=`<text x="0" y="${H+13}" fill="#8FA9B7" font-size="9">${buckets[0].label}</text>`;
-  out+=`<text x="${W}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="end">${buckets[buckets.length-1].label}</text>`;
-  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max}/${unit} peak</text></svg>`;
+  pickLabelIndices(n,6).forEach((i,k,arr)=>{
+    const isFirst=k===0, isLast=k===arr.length-1;
+    const anchor=isFirst?"start":isLast?"end":"middle";
+    const x=isFirst?i*bw:isLast?(i+1)*bw:i*bw+bw/2;
+    out+=`<text x="${x.toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="${anchor}">${buckets[i].label}</text>`;
+  });
+  out+=`</svg>`;
   return out;
 }
 function svgDur(days,W,H){
   W=W||300; H=H||110; days=days===undefined?30:days;
-  const span=days===Infinity?effectiveDays():days;
-  const cutoff=Date.now()-span*864e5;
-  const pts=records.filter(r=>new Date(r.start).getTime()>=cutoff);
+  const {from:t0,to:t1}=windowBounds(days);
+  const pts=records.filter(r=>{const t=new Date(r.start).getTime(); return t>=t0&&t<t1;});
   if(!pts.length) return `<svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}" fill="#8FA9B7" font-size="11" text-anchor="middle">No entries in this range</text></svg>`;
-  const t0=cutoff, t1=Date.now();
-  const maxD=Math.max(60,...pts.map(p=>p.dur));
-  const X=t=>((t-t0)/(t1-t0))*(W-14)+7, Y=d=>H-(d/maxD)*(H-14)-4;
+  const dataMax=Math.max(60,...pts.map(p=>p.dur));
+  const axisMax=dataMax*1.10;
+  const X=t=>((t-t0)/(t1-t0))*(W-14)+7, Y=d=>H-(d/axisMax)*(H-14)-4;
   let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Length of each seizure">`;
-  [0,.5,1].forEach(f=>{const y=Y(maxD*f);
+  [0,.5,1].forEach(f=>{const y=Y(axisMax*f);
     out+=`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" stroke="#25404F" stroke-width=".5"/>`;
-    out+=`<text x="2" y="${(y-3).toFixed(1)}" fill="#8FA9B7" font-size="9">${fmt(maxD*f)}</text>`;});
+    out+=`<text x="2" y="${(y-3).toFixed(1)}" fill="#8FA9B7" font-size="9">${fmt(axisMax*f)}</text>`;});
   const sorted=pts.slice().sort((a,b)=>new Date(a.start)-new Date(b.start));
   out+=`<polyline fill="none" stroke="#3E6479" stroke-width="1" points="${
     sorted.map(p=>X(new Date(p.start).getTime()).toFixed(1)+","+Y(p.dur).toFixed(1)).join(" ")}"/>`;
   sorted.forEach(p=>{
-    out+=`<circle cx="${X(new Date(p.start).getTime()).toFixed(1)}" cy="${Y(p.dur).toFixed(1)}" r="3.4" fill="${p.type==="grand"?"#E4695E":"#58C0B0"}"/>`;
+    const label=`${p.start.slice(0,10)} ${new Date(p.start).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}: ${fmt(p.dur)} (${typeName(p.type)})`;
+    out+=`<circle cx="${X(new Date(p.start).getTime()).toFixed(1)}" cy="${Y(p.dur).toFixed(1)}" r="3.4" fill="${p.type==="grand"?"#E4695E":"#58C0B0"}"><title>${esc(label)}</title></circle>`;
   });
   out+=`</svg>`;
   return out;
 }
 function svgHour(days,W,H){
   W=W||300; H=H||110; days=days===undefined?30:days;
-  const span=days===Infinity?effectiveDays():days;
-  const cutoff=Date.now()-span*864e5;
+  const {from:t0,to:t1}=windowBounds(days);
   const counts=new Array(24).fill(0);
-  records.forEach(r=>{ const t=new Date(r.start); if(t.getTime()>=cutoff) counts[t.getHours()]++; });
-  const max=Math.max(1,...counts), bw=W/24;
+  records.forEach(r=>{ const t=new Date(r.start).getTime(); if(t>=t0&&t<t1) counts[new Date(r.start).getHours()]++; });
+  const dataMax=Math.max(1,...counts);
+  const axisMax=dataMax*1.10;
+  const bw=W/24;
+  const hourLabel=h=>h===0?"12am":h<12?h+"am":h===12?"12pm":(h-12)+"pm";
   let out=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="Seizures by time of day">`;
-  for(let g=0;g<=max;g++){const y=H-(g/max)*H;
-    out+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#25404F" stroke-width=".5"/>`;}
+  [0,.5,1].forEach(f=>{
+    const y=H-f*H;
+    out+=`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" stroke="#25404F" stroke-width=".5"/>`;
+    out+=`<text x="2" y="${(y-3).toFixed(1)}" fill="#8FA9B7" font-size="9">${Math.round(axisMax*f)}</text>`;
+  });
   counts.forEach((n,i)=>{
-    const h=(n/max)*H, x=i*bw+bw*0.12, w=bw*0.76;
-    if(n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#FFB338"/>`;
+    const h=(n/axisMax)*H, x=i*bw+bw*0.12, w=bw*0.76;
+    if(n) out+=`<rect x="${x.toFixed(1)}" y="${(H-h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#FFB338"><title>${hourLabel(i)}: ${n} seizure${n===1?"":"s"}</title></rect>`;
   });
   [0,6,12,18,23].forEach(h=>{
-    const x=h*bw+bw/2, label=h===0?"12am":h<12?h+"am":h===12?"12pm":(h-12)+"pm";
-    out+=`<text x="${x.toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="middle">${label}</text>`;
+    const x=h*bw+bw/2;
+    out+=`<text x="${x.toFixed(1)}" y="${H+13}" fill="#8FA9B7" font-size="9" text-anchor="middle">${hourLabel(h)}</text>`;
   });
-  out+=`<text x="2" y="9" fill="#8FA9B7" font-size="9">${max} peak</text></svg>`;
+  out+=`</svg>`;
   return out;
 }
+function freqDisplay(days,W,H){
+  if(days===TODAY_KEY){
+    const {from,to}=windowBounds(days);
+    const todays=records.filter(r=>{const t=new Date(r.start).getTime(); return t>=from&&t<to;});
+    const grand=todays.filter(r=>r.type==="grand").length, focal=todays.length-grand;
+    return `<div class="today-stat"><div class="today-num">${todays.length}</div>
+      <div class="today-sub">${focal} focal · ${grand} grand mal</div></div>`;
+  }
+  return svgFreq(days,W,H);
+}
 function drawCharts(){
-  $("#chartFreq").innerHTML=svgFreq(chartDays);
+  $("#chartFreq").innerHTML=freqDisplay(chartDays);
   $("#chartDur").innerHTML=svgDur(chartDays);
   $("#chartHour").innerHTML=svgHour(chartDays);
 }
@@ -474,7 +536,7 @@ function drawCharts(){
 /* ---------- fullscreen chart modal ---------- */
 const modalDlg=$("#chartDlg");
 const chartMeta={
-  freq:{title:"Seizures per day", fn:svgFreq},
+  freq:{title:"Seizures per day", fn:freqDisplay},
   dur:{title:"Length of each seizure", fn:svgDur},
   hour:{title:"Seizures by time of day", fn:svgHour}
 };
@@ -589,22 +651,61 @@ function renderList(){
     moreBtn.onclick=()=>{ listExpanded=!listExpanded; renderList(); };
   } else moreBtn.hidden=true;
 }
-function render(){
-  const now=Date.now();
-  const in7=records.filter(r=>now-new Date(r.start).getTime()<7*864e5).length;
-  const in30=records.filter(r=>now-new Date(r.start).getTime()<30*864e5).length;
-  $("#s7").textContent=in7; $("#s30").textContent=in30;
-  if(records.length){
-    const ds=records.map(r=>r.dur).sort((a,b)=>a-b);
-    $("#sMed").textContent=fmt(ds[Math.floor(ds.length/2)]);
-  } else $("#sMed").textContent="—";
+/* ---------- stats banner: total / avg length / avg between, vs prior period ---------- */
+function periodBounds(days){
+  const to=Date.now();
+  if(days===TODAY_KEY){
+    const start=new Date(); start.setHours(0,0,0,0);
+    const elapsed=to-start.getTime();
+    const prevStart=start.getTime()-864e5;
+    return {from:start.getTime(),to,prevFrom:prevStart,prevTo:prevStart+elapsed};
+  }
+  if(days===Infinity) return {from:0,to,prevFrom:null,prevTo:null};
+  const from=to-days*864e5;
+  return {from,to,prevFrom:from-days*864e5,prevTo:from};
+}
+function statsFor(from,to){
+  const recs=records.filter(r=>{const t=new Date(r.start).getTime(); return t>=from&&t<to;});
+  const total=recs.length;
+  const avgDur=total?recs.reduce((s,r)=>s+r.dur,0)/total:null;
+  let avgGap=null;
+  if(total>1){
+    const sorted=recs.slice().sort((a,b)=>new Date(a.start)-new Date(b.start));
+    let sum=0; for(let i=1;i<sorted.length;i++) sum+=(new Date(sorted[i].start)-new Date(sorted[i-1].start))/1000;
+    avgGap=sum/(sorted.length-1);
+  }
+  return {total,avgDur,avgGap};
+}
+function fmtGap(sec){
+  if(sec==null) return "—";
+  const h=sec/3600;
+  return h<48?h.toFixed(1)+" hr":(h/24).toFixed(1)+" d";
+}
+function fmtDelta(cur,prev){
+  if(cur==null||prev==null||!prev) return "";
+  const pct=((cur-prev)/prev)*100;
+  if(!isFinite(pct)||Math.round(pct)===0) return "no change vs prior period";
+  return `${pct>0?"▲":"▼"} ${Math.abs(pct).toFixed(0)}% vs prior period`;
+}
+function updateStatsBanner(){
+  $("#statsPeriod").textContent=(RANGES.find(r=>r.v===chartDays)||{}).desc||"";
+  const {from,to,prevFrom,prevTo}=periodBounds(chartDays);
+  const cur=statsFor(from,to);
+  const prev=prevFrom!=null?statsFor(prevFrom,prevTo):null;
+  $("#sTotal").textContent=cur.total;
+  $("#sAvgDur").textContent=cur.avgDur!=null?fmt(cur.avgDur):"—";
+  $("#sAvgGap").textContent=cur.avgGap!=null?fmtGap(cur.avgGap):"—";
+  $("#sAvgDurDelta").textContent=prev&&cur.avgDur!=null?fmtDelta(cur.avgDur,prev.avgDur):"";
+  $("#sAvgGapDelta").textContent=prev&&cur.avgGap!=null?fmtDelta(cur.avgGap,prev.avgGap):"";
   $("#sinceLast").textContent=since();
+}
+function render(){
+  updateStatsBanner();
   renderPills($("#rangePills"));
   drawCharts();
   renderTypeFilter();
   renderList();
 }
-function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
 /* ---------- export ---------- */
 function download(name,text,mime){

@@ -1,4 +1,4 @@
-const CACHE = "seizure-log-v3";
+const CACHE = "seizure-log-v4";
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
